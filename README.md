@@ -1,6 +1,9 @@
 # Conceptor Steering
-Bravely attempting to steer the behavior of a GPT-2XL model using Conceptors.
+A novel technique called "Conceptor-Based Activation Engineering".<br>
+We are bravely attempting to steer the behavior of a GPT-2XL model using Conceptors.<br>
 Inspired by recent discoveries in activation engineering/steering.
+
+by Joris Postmus & Steven Abreau (supervisor)
 
 <hr>
 
