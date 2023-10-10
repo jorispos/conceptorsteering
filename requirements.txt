@@ -1,0 +1,12 @@
+circuitsvis==1.41.0
+datasets==2.14.5
+einops==0.7.0
+fancy_einsum==0.0.3
+ipython==8.16.1
+jaxtyping==0.2.22
+numpy==1.26.0
+plotly==5.17.0
+torch==2.0.1
+tqdm==4.66.1
+transformer_lens==1.6.1
+transformers==4.34.0
