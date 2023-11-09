@@ -33,9 +33,9 @@ from transformer_lens.hook_points import (
     HookPoint,
 )
 from transformer_lens import HookedTransformer, HookedTransformerConfig, FactoredMatrix, ActivationCache
+import circuitsvis as cv
 import plotly.io as pio
 print(f"Using renderer: {pio.renderers.default}")
-import circuitsvis as cv
 
 # Testing that the library works
 cv.examples.hello("Neel")
