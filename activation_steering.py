@@ -31,10 +31,11 @@ def module_forward_wrapper(
         out = _torch_module_call(mod, *args, **kwargs)
 
         if isinstance(mod, GPT2Block):
-            # TODO: need to keep track of the layer indices
+            # TODO: make sure this gets the layer indices right
             layer_tracker.current_layer += 1
 
-            # apply conceptor(s) here
+            # TODO apply conceptor(s) here
+            c = conceptors[layer_tracker.current_layer]
             # ...
 
         return out
@@ -84,11 +85,6 @@ def process_prompt(model, tokenizer, text, device):
     with ConceptorSteering(model, {}), torch.no_grad():
         out = model(input_ids=input_ids)
     return out
-    # # HACK: The current graph is using copy-constructors, that detaches
-    # # the traced output_types from the original graph.
-    # # In the future, find a way to synchronize the two representations
-    # tracer.graph.module_output_types = tracer.output_types
-    # return tracer.graph
 
 
 if __name__ == "__main__":
