@@ -14,29 +14,30 @@ logging.basicConfig(level=logging.INFO)
 # Constants
 LAYER_COUNT = 48  # Number of layers in the GPT-2 XL model
 MODEL_NAME = 'gpt2-xl'
-
+TARGET_LAYER = 6  # Target layer to apply conceptor
 
 _torch_module_call = torch.nn.Module.__call__
 
-
 class LayerTracker:
     def __init__(self) -> None:
-        self.current_layer = 0
+        self.current_layer = 0  # Initialize to 0
 
-
-def module_forward_wrapper(
-        conceptors: Dict[int, torch.Tensor], layer_tracker: LayerTracker
-) -> Callable[..., Any]:
+def module_forward_wrapper(conceptors: Dict[int, torch.Tensor], layer_tracker: LayerTracker) -> Callable[..., Any]:
     def my_forward(mod: nn.Module, *args, **kwargs) -> Any:
         out = _torch_module_call(mod, *args, **kwargs)
 
         if isinstance(mod, GPT2Block):
-            # TODO: make sure this gets the layer indices right
-            layer_tracker.current_layer += 1
+            if layer_tracker.current_layer == TARGET_LAYER:
+                c = conceptors.get(layer_tracker.current_layer, None)
+                if c is not None:
+                    # Assuming the first element of the tuple is the activations
+                    activations = out[0]
+                    # Apply the conceptor
+                    new_activations = torch.matmul(activations, c)
+                    # Reassemble the output tuple
+                    out = (new_activations,) + out[1:]
 
-            # TODO apply conceptor(s) here
-            c = conceptors[layer_tracker.current_layer]
-            # ...
+            layer_tracker.current_layer += 1
 
         return out
 
@@ -44,15 +45,7 @@ def module_forward_wrapper(
 
 
 class ConceptorSteering:
-    """Context manager to apply conceptors in the forward pass.
-
-    Example:
-
-    ```python
-    with ConceptorSteering(model, conceptor) as tracer, torch.no_grad():
-        out = model(data)
-    ```
-    """
+    """Context manager to apply conceptors in the forward pass."""
 
     def __init__(self, mod: nn.Module, c: Dict[int, torch.Tensor]) -> None:
         self.original_torch_call = nn.Module.__call__
@@ -69,22 +62,34 @@ class ConceptorSteering:
         nn.Module.__call__ = self.original_torch_call
 
 
-def process_prompt(model, tokenizer, text, device):
+def process_prompt(model, tokenizer, text, device, conceptors, max_length=50):
     """
-    Process a single prompt to capture and store activations.
+    Process a single prompt to generate text auto-regressively.
     Args:
         model (torch.nn.Module): The GPT-2 model.
         tokenizer (transformers.PreTrainedTokenizer): The tokenizer for GPT-2.
         text (str): The input prompt text.
-        activations (list): List to store activations from each layer.
         device (torch.device): The device to run the model on (CPU or GPU).
+        conceptors (Dict[int, torch.Tensor]): Dictionary of conceptors.
+        max_length (int): Maximum length of generated text in tokens.
     """
     input_ids = tokenizer.encode(text, return_tensors='pt').to(device)
-
     model.eval()
-    with ConceptorSteering(model, {}), torch.no_grad():
-        out = model(input_ids=input_ids)
-    return out
+
+    generated_text = []
+    with ConceptorSteering(model, conceptors), torch.no_grad():
+        for _ in range(max_length):
+            outputs = model(input_ids=input_ids)
+            next_token_logits = outputs.logits[:, -1, :]
+            next_token = torch.argmax(next_token_logits, dim=-1)
+            input_ids = torch.cat([input_ids, next_token.unsqueeze(0)], dim=-1)
+
+            generated_text.append(next_token.item())
+            if next_token.item() == tokenizer.eos_token_id:
+                break
+
+    generated_text = tokenizer.decode(generated_text, skip_special_tokens=True)
+    return generated_text
 
 
 if __name__ == "__main__":
@@ -92,5 +97,10 @@ if __name__ == "__main__":
     tokenizer = GPT2Tokenizer.from_pretrained(MODEL_NAME)
     model = GPT2LMHeadModel.from_pretrained(MODEL_NAME).to(device)
 
+    # Initialize the identity matrix conceptor for the target layer
+    identity_matrix = torch.eye(1600)
+    conceptors = {TARGET_LAYER: identity_matrix}
+
     prompt = "This research project is about"
-    process_prompt(model, tokenizer, prompt, device)
+    generated_output = process_prompt(model, tokenizer, prompt, device, conceptors, max_length=50)
+    print(generated_output)
