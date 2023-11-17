@@ -62,7 +62,7 @@ class ConceptorSteering:
         nn.Module.__call__ = self.original_torch_call
 
 
-def process_prompt(model, tokenizer, text, device, conceptors, max_length=50):
+def process_prompt(model, tokenizer, text, device, conceptors=None, max_length=50, use_steering=True):
     """
     Process a single prompt to generate text auto-regressively.
     Args:
@@ -70,26 +70,41 @@ def process_prompt(model, tokenizer, text, device, conceptors, max_length=50):
         tokenizer (transformers.PreTrainedTokenizer): The tokenizer for GPT-2.
         text (str): The input prompt text.
         device (torch.device): The device to run the model on (CPU or GPU).
-        conceptors (Dict[int, torch.Tensor]): Dictionary of conceptors.
+        conceptors (Dict[int, torch.Tensor], optional): Dictionary of conceptors. None for unsteered generation.
         max_length (int): Maximum length of generated text in tokens.
+        use_steering (bool): Flag to apply conceptor steering.
     """
     input_ids = tokenizer.encode(text, return_tensors='pt').to(device)
     model.eval()
 
     generated_text = []
-    with ConceptorSteering(model, conceptors), torch.no_grad():
-        for _ in range(max_length):
-            outputs = model(input_ids=input_ids)
-            next_token_logits = outputs.logits[:, -1, :]
-            next_token = torch.argmax(next_token_logits, dim=-1)
-            input_ids = torch.cat([input_ids, next_token.unsqueeze(0)], dim=-1)
+    steering_context = ConceptorSteering(model, conceptors) if use_steering and conceptors else None
+    with torch.no_grad():
+        if steering_context:
+            with steering_context:
+                generated_text = _generate_text(model, input_ids, max_length, tokenizer)
+        else:
+            generated_text = _generate_text(model, input_ids, max_length, tokenizer)
 
-            generated_text.append(next_token.item())
-            if next_token.item() == tokenizer.eos_token_id:
-                break
-
-    generated_text = tokenizer.decode(generated_text, skip_special_tokens=True)
     return generated_text
+
+
+def _generate_text(model, input_ids, max_length, tokenizer):
+    """
+    Helper function to generate text auto-regressively.
+    """
+    generated_text = []
+    for _ in range(max_length):
+        outputs = model(input_ids=input_ids)
+        next_token_logits = outputs.logits[:, -1, :]
+        next_token = torch.argmax(next_token_logits, dim=-1)
+        input_ids = torch.cat([input_ids, next_token.unsqueeze(0)], dim=-1)
+
+        generated_text.append(next_token.item())
+        if next_token.item() == tokenizer.eos_token_id:
+            break
+
+    return tokenizer.decode(generated_text, skip_special_tokens=True)
 
 
 if __name__ == "__main__":
@@ -98,9 +113,16 @@ if __name__ == "__main__":
     model = GPT2LMHeadModel.from_pretrained(MODEL_NAME).to(device)
 
     # Initialize the identity matrix conceptor for the target layer
-    identity_matrix = torch.eye(1600)
+    identity_matrix = torch.eye(1600)  # Adjust as needed
     conceptors = {TARGET_LAYER: identity_matrix}
 
     prompt = "This research project is about"
-    generated_output = process_prompt(model, tokenizer, prompt, device, conceptors, max_length=50)
-    print(generated_output)
+    print("Prompt:\n", prompt)
+
+    # Generate steered output
+    steered_output = process_prompt(model, tokenizer, prompt, device, conceptors, max_length=50, use_steering=True)
+    print("------------------------------\nSteered Completion: (identity matrix for now)\n", steered_output)
+
+    # Generate unsteered output
+    unsteered_output = process_prompt(model, tokenizer, prompt, device, max_length=50, use_steering=False)
+    print("------------------------------\nUnsteered Completion:\n", unsteered_output)
