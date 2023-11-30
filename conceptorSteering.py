@@ -79,9 +79,9 @@ print(">> Computing conceptor...")
 # TODO: Compute conceptors using activations matrix from above
 # If computed per token this would return a numpy array of shape (num_tokens, num_activations, num_activations)
 
-##########################
-### Apply Conceptor(s) ###
-##########################
+######################################
+### Steer prompts using Conceptors ###
+######################################
 
 # TODO: Apply conceptors to prompts and generate text
 
