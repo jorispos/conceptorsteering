@@ -28,13 +28,13 @@ if torch.cuda.is_available():
 #########################
 print(">> Extracting activations from steering prompts...")
 
-# Specific to the love/hate example (For ActAdd)
+# Open the steering prompts file and read all prompts into a list
 steering_prompts = []
 with open(STEERING_PROMPTS_PATH, "r") as file:
     for line in file:
         steering_prompts.append(line.strip())
 
-# Apply padding to all steering prompts so that all have the same token length
+# Add padding to all steering prompts so that all have the same token length
 tlen = lambda prompt: model.to_tokens(prompt).shape[1]
 pad_right = lambda prompt, length: prompt + " " * (length - tlen(prompt))
 l = max([tlen(p) for p in steering_prompts])
@@ -77,9 +77,43 @@ print(str(activations.shape) + ": Activations matrix for all steering prompts")
 print(">> Computing conceptor...")
 
 # TODO: Compute conceptors using activations matrix from above
+# If computed per token this would return a numpy array of shape (num_tokens, num_activations, num_activations)
 
 ##########################
 ### Apply Conceptor(s) ###
 ##########################
 
 # TODO: Apply conceptors to prompts and generate text
+
+# Assume we have a conceptor steering matrix for each token of shape (num_tokens, num_activations, num_activations)
+exit()
+# The code below is from the original exampleActivationAddition.py file and needs to be modified for conceptor steering
+# Generate from modified model
+def ave_hook(resid_pre, hook):
+    # Makes sure only prompt tokens are modified
+    if resid_pre.shape[1] == 1: 
+        return
+
+    # We only add to the prompt (first call), not the generated tokens.
+    ppos, apos = resid_pre.shape[1], act_diff.shape[1]
+    print(f"Prompt tokens: {ppos}, Activation tokens: {apos}")
+    assert apos <= ppos, f"More mod tokens ({apos}) then prompt tokens ({ppos})!"
+
+    # add to the beginning (position-wise) of the activations
+    resid_pre[:, :apos, :] += coeff * act_diff
+
+def hooked_generate(prompt_batch: List[str], fwd_hooks=[], seed=None, **kwargs):
+    if seed is not None:
+        torch.manual_seed(seed)
+
+    with model.hooks(fwd_hooks=fwd_hooks):
+        tokenized = model.to_tokens(prompt_batch)
+        r = model.generate(input=tokenized, max_new_tokens=50, do_sample=True, **kwargs)
+    return r
+
+editing_hooks = [(f"blocks.{act_name}.hook_resid_pre", ave_hook)]
+res = hooked_generate([prompt] * 4, editing_hooks, seed=SEED, **sampling_kwargs)
+
+# Print results, removing the ugly beginning of sequence token
+res_str = model.to_string(res[:, 1:])
+print(("\n\n" + "-" * 80 + "\n\n").join(res_str))
