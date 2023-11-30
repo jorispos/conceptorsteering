@@ -64,7 +64,7 @@ activations = []
 for prompt in steering_prompts:
     prompt_activations = get_resid_pre(prompt, extraction_layer)
     prompt_activations = np.squeeze(prompt_activations.detach().cpu().numpy())
-    print(str(prompt_activations.shape) + ": Activation vector for prompt: " + prompt)
+    print(str(prompt_activations.shape) + ": Activation vector for prompt: \"" + prompt + "\"")
     activations.append(prompt_activations)
 activations = np.array(activations)
 

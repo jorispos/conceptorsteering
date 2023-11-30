@@ -1,6 +1,3 @@
-# Large conceptor file
-conceptorsData/conceptors.npy
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
