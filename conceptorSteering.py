@@ -1,6 +1,7 @@
 #########################
 ######### Setup #########
 #########################
+print(">> Setting up program...")
 
 # Import dependencies
 import torch
@@ -9,33 +10,28 @@ from typing import Dict, Union, List
 import numpy as np
 
 # Load the model
-torch.set_grad_enabled(False)  # save memory
+torch.set_grad_enabled(False)
 model = HookedTransformer.from_pretrained("gpt2-xl")
 model.eval()
 if torch.cuda.is_available():
-  model.to('cuda')
+    model.to('cuda')
 
 # Settings from the paper
 SEED = 0
 sampling_kwargs = dict(temperature=1.0, top_p=0.3, freq_penalty=1.0)
 extraction_layer = 6
+STEERING_PROMPTS_PATH = "./prompts/wedding_tokens.txt"
 
 #########################
 # Activation Extraction #
 #########################
+print(">> Extracting activations from steering prompts...")
 
 # Specific to the love/hate example (For ActAdd)
-steering_prompts = [
-    "wedding",
-    "weddings",
-    "wed",
-    "marry",
-    "married",
-    "marriage",
-    "bride",
-    "groom",
-    "honeymoon"
-]
+steering_prompts = []
+with open(STEERING_PROMPTS_PATH, "r") as file:
+    for line in file:
+        steering_prompts.append(line.strip())
 
 # Apply padding to all steering prompts so that all have the same token length
 tlen = lambda prompt: model.to_tokens(prompt).shape[1]
@@ -74,14 +70,15 @@ activations = np.array(activations)
 
 print(str(activations.shape) + ": Activations matrix for all steering prompts")
 
-#########################
-# Compute Conceptor(s) ##
-#########################
+##########################
+## Compute Conceptor(s) ##
+##########################
+print(">> Computing conceptor...")
 
 # TODO: Compute conceptors using activations matrix from above
 
-#########################
-## Apply Conceptor(s) ###
-#########################
+##########################
+### Apply Conceptor(s) ###
+##########################
 
 # TODO: Apply conceptors to prompts and generate text
