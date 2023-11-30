@@ -9,18 +9,19 @@ from transformer_lens import HookedTransformer
 from typing import Dict, Union, List
 import numpy as np
 
-# Load the model
-torch.set_grad_enabled(False)
-model = HookedTransformer.from_pretrained("gpt2-xl")
-model.eval()
-if torch.cuda.is_available():
-    model.to('cuda')
-
 # Settings from the paper
 SEED = 0
 sampling_kwargs = dict(temperature=1.0, top_p=0.3, freq_penalty=1.0)
 extraction_layer = 6
 STEERING_PROMPTS_PATH = "./prompts/wedding_tokens.txt"
+
+# Load the model
+print(">> Loading model...")
+torch.set_grad_enabled(False)
+model = HookedTransformer.from_pretrained("gpt2-xl")
+model.eval()
+if torch.cuda.is_available():
+    model.to('cuda')
 
 #########################
 # Activation Extraction #
