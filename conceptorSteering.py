@@ -103,7 +103,7 @@ def ave_hook(resid_pre, hook):
     print(f"Prompt tokens: {prompt_to_steer_length}, Steering tokens: {steering_matrices_length}")
     assert steering_matrices_length <= prompt_to_steer_length, f"More steering tokens ({steering_matrices_length}) then prompt tokens ({prompt_to_steer_length})!"
 
-    # add to the beginning (position-wise) of the activations
+    # TODO : modify line below so that dot product is taken with correct conceptor matrix instead of addition
     #resid_pre[:, :apos, :] += coeff * act_diff
 
 def hooked_generate(prompt_batch: List[str], fwd_hooks=[], seed=None, **kwargs):
