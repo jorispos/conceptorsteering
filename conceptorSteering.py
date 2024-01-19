@@ -75,6 +75,7 @@ print(str(activations.shape) + ": Activations matrix for all steering prompts")
 ## Compute Conceptor(s) ##
 ##########################
 print(">> Computing conceptor...")
+steering_matrices = None
 
 # TODO: Compute conceptors using activations matrix from above
 # If computed per token this would return a numpy array of shape (num_tokens, num_activations, num_activations)
@@ -82,25 +83,28 @@ print(">> Computing conceptor...")
 ######################################
 ### Steer prompts using Conceptors ###
 ######################################
-
-# TODO: Apply conceptors to prompts and generate text
-
 # Assume we have a conceptor steering matrix for each token of shape (num_tokens, num_activations, num_activations)
-exit()
-# The code below is from the original exampleActivationAddition.py file and needs to be modified for conceptor steering
+
+print(">> Steering prompts using conceptors...")
+PROMPT_TO_STEER = "I am going to a "
+
 # Generate from modified model
 def ave_hook(resid_pre, hook):
     # Makes sure only prompt tokens are modified
     if resid_pre.shape[1] == 1: 
         return
 
-    # We only add to the prompt (first call), not the generated tokens.
-    ppos, apos = resid_pre.shape[1], act_diff.shape[1]
-    print(f"Prompt tokens: {ppos}, Activation tokens: {apos}")
-    assert apos <= ppos, f"More mod tokens ({apos}) then prompt tokens ({ppos})!"
+    return
+
+    # TODO: remove return above and uncomment when conceptors are computed
+    # resid_pre contains the activations to be modified using the conceptor
+    # This is an example where there is a steering conceptor matrix for each token
+    prompt_to_steer_length, steering_matrices_length = resid_pre.shape[1], steering_matrices.shape[1]
+    print(f"Prompt tokens: {prompt_to_steer_length}, Steering tokens: {steering_matrices_length}")
+    assert steering_matrices_length <= prompt_to_steer_length, f"More steering tokens ({steering_matrices_length}) then prompt tokens ({prompt_to_steer_length})!"
 
     # add to the beginning (position-wise) of the activations
-    resid_pre[:, :apos, :] += coeff * act_diff
+    #resid_pre[:, :apos, :] += coeff * act_diff
 
 def hooked_generate(prompt_batch: List[str], fwd_hooks=[], seed=None, **kwargs):
     if seed is not None:
@@ -111,8 +115,8 @@ def hooked_generate(prompt_batch: List[str], fwd_hooks=[], seed=None, **kwargs):
         r = model.generate(input=tokenized, max_new_tokens=50, do_sample=True, **kwargs)
     return r
 
-editing_hooks = [(f"blocks.{act_name}.hook_resid_pre", ave_hook)]
-res = hooked_generate([prompt] * 4, editing_hooks, seed=SEED, **sampling_kwargs)
+editing_hooks = [(f"blocks.{extraction_layer}.hook_resid_pre", ave_hook)]
+res = hooked_generate([PROMPT_TO_STEER] * 4, editing_hooks, seed=SEED, **sampling_kwargs)
 
 # Print results, removing the ugly beginning of sequence token
 res_str = model.to_string(res[:, 1:])
