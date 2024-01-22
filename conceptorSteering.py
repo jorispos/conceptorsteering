@@ -55,20 +55,24 @@ def hooked_generate(prompt_batch: List[str], fwd_hooks=[], seed=None, **kwargs):
 
 def generate_ave_hook(steering_matrices):
     def ave_hook(resid_pre, hook):
-        # TODO: implement this
-
         # Makes sure only prompt tokens are modified
         if resid_pre.shape[1] == 1:
             return
 
+        # resid_pre.shape => torch.Size([4, 7, 1600])
+        # steering_matrices.shape => (4, 1600, 1600)
+
         # resid_pre contains the activations to be modified using the conceptor
         # This is an example where there is a steering conceptor matrix for each token
-        prompt_to_steer_length, steering_matrices_length = resid_pre.shape[1], steering_matrices.shape[1]
+        prompt_to_steer_length, steering_matrices_length = resid_pre.shape[1], steering_matrices.shape[0]
         print(f"Prompt tokens: {prompt_to_steer_length}, Steering tokens: {steering_matrices_length}")
         assert steering_matrices_length <= prompt_to_steer_length, f"More steering tokens ({steering_matrices_length}) than prompt tokens ({prompt_to_steer_length})!"
 
-        # TODO : modify line below so that dot product is taken with correct conceptor matrix instead of addition
-        # resid_pre[:, :apos, :] += coeff * act_diff
+        # Dot product is taken with correct conceptor matrix
+        for i in range(steering_matrices.shape[0]):
+            for j in range(resid_pre.shape[0]):
+                # TODO: batch this properly
+                resid_pre[j, i, :] = torch.matmul(steering_matrices[i], resid_pre[j, i, :])
 
     return ave_hook
 
@@ -80,6 +84,7 @@ def _parse_args():
     parser.add_argument('--seed', type=int, default=0, help='Random seed')
     parser.add_argument('--steering_prompts_path', type=str, default='./prompts/wedding_tokens.txt', help='Path to steering prompts file')
     parser.add_argument('--prompt_to_steer', type=str, default='I am going to a ', help='Prompt to test steering')
+    parser.add_argument('--n_steered_examples', type=int, default=4, help='How many times to steer the same prompt')
 
     # conceptor params
     parser.add_argument('--aperture', type=float, default=10.0, help='Aperture for the conceptor')
@@ -96,13 +101,14 @@ def _parse_args():
 if __name__ == '__main__':
     args = _parse_args()
 
+    # mps is not yet supported
+    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+
     # Load the model
     print(">> Loading model...")
     torch.set_grad_enabled(False)
-    model = HookedTransformer.from_pretrained(args.model_name)
+    model = HookedTransformer.from_pretrained(args.model_name, device=DEVICE)
     model.eval()
-    if torch.cuda.is_available():
-        model.to('cuda')
 
     # Activation Extraction
     print(">> Extracting activations from steering prompts...")
@@ -124,6 +130,7 @@ if __name__ == '__main__':
         compute_conceptor(activations[:, idx, :], aperture=args.aperture)
         for idx in range(activations.shape[1])
     ])
+    steering_matrices = torch.Tensor(steering_matrices, device=DEVICE)
     # shape: (num_tokens, num_activations, num_activations)
 
     ######################################
@@ -133,7 +140,7 @@ if __name__ == '__main__':
     ave_hook = generate_ave_hook(steering_matrices=steering_matrices)
     sampling_kwargs = dict(temperature=args.temperature, top_p=args.top_p, freq_penalty=args.freq_penalty)
     editing_hooks = [(f"blocks.{args.extraction_layer}.hook_resid_pre", ave_hook)]
-    res = hooked_generate([args.prompt_to_steer] * 4, editing_hooks, seed=args.seed, **sampling_kwargs)
+    res = hooked_generate([args.prompt_to_steer] * args.n_steered_examples, editing_hooks, seed=args.seed, **sampling_kwargs)
 
     # Print results, removing the ugly beginning of sequence token
     res_str = model.to_string(res[:, 1:])
