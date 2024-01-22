@@ -18,13 +18,13 @@ def compute_conceptor(X, aperture, svd=False, svd_eps=0.001):
         return C
     else:
         U, S, _ = np.linalg.svd(R, full_matrices=False, hermitian=True)
-        C = U*(S/(S+svd_eps*np.ones(S.shape)))@U.T
+        C = U * (S / (S + svd_eps * np.ones(S.shape))) @ U.T
         return C
 
 
 def rescale_aperture(C, prev_aperture, new_aperture):
     """Rescale the aperture of the given conceptor matrix.
-    
+
     Parameters:
     - C (numpy.ndarray): Conceptor matrix of shape (n_features, n_features).
     - prev_aperture (float): Previous aperture value used to compute C.
@@ -32,5 +32,5 @@ def rescale_aperture(C, prev_aperture, new_aperture):
     Returns:
     - numpy.ndarray: Rescaled conceptor matrix of shape (n_features, n_features).
     """
-    scaling = prev_aperture/new_aperture
+    scaling = prev_aperture / new_aperture
     return C @ np.linalg.inv(C + scaling**2 * (np.eye(C.shape[0]) - C))

@@ -55,22 +55,21 @@ def hooked_generate(prompt_batch: List[str], fwd_hooks=[], seed=None, **kwargs):
 
 def generate_ave_hook(steering_matrices):
     def ave_hook(resid_pre, hook):
+        # TODO: implement this
 
-            # TODO: implement this
+        # Makes sure only prompt tokens are modified
+        if resid_pre.shape[1] == 1:
+            return
 
-            # Makes sure only prompt tokens are modified
-            if resid_pre.shape[1] == 1:
-                return
+        # resid_pre contains the activations to be modified using the conceptor
+        # This is an example where there is a steering conceptor matrix for each token
+        prompt_to_steer_length, steering_matrices_length = resid_pre.shape[1], steering_matrices.shape[1]
+        print(f"Prompt tokens: {prompt_to_steer_length}, Steering tokens: {steering_matrices_length}")
+        assert steering_matrices_length <= prompt_to_steer_length, f"More steering tokens ({steering_matrices_length}) than prompt tokens ({prompt_to_steer_length})!"
 
-            # resid_pre contains the activations to be modified using the conceptor
-            # This is an example where there is a steering conceptor matrix for each token
-            prompt_to_steer_length, steering_matrices_length = resid_pre.shape[1], steering_matrices.shape[1]
-            print(f"Prompt tokens: {prompt_to_steer_length}, Steering tokens: {steering_matrices_length}")
-            assert steering_matrices_length <= prompt_to_steer_length, f"More steering tokens ({steering_matrices_length}) than prompt tokens ({prompt_to_steer_length})!"
+        # TODO : modify line below so that dot product is taken with correct conceptor matrix instead of addition
+        # resid_pre[:, :apos, :] += coeff * act_diff
 
-            # TODO : modify line below so that dot product is taken with correct conceptor matrix instead of addition
-            # resid_pre[:, :apos, :] += coeff * act_diff
-    
     return ave_hook
 
 
