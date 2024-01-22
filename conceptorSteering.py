@@ -80,7 +80,7 @@ def _parse_args():
     parser.add_argument('--seed', type=int, default=0, help='Random seed')
     parser.add_argument('--steering_prompts_path', type=str, default='./prompts/wedding_tokens.txt', help='Path to steering prompts file')
     parser.add_argument('--prompt_to_steer', type=str, default='I am going to a ', help='Prompt to test steering')
-    parser.add_argument('--n_steered_examples', type=int, default='How many times to steer the same prompt')
+    parser.add_argument('--n_steered_examples', type=int, default=4, help='How many times to steer the same prompt')
 
     # conceptor params
     parser.add_argument('--aperture', type=float, default=10.0, help='Aperture for the conceptor')
