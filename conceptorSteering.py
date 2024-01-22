@@ -80,6 +80,7 @@ def _parse_args():
     parser.add_argument('--seed', type=int, default=0, help='Random seed')
     parser.add_argument('--steering_prompts_path', type=str, default='./prompts/wedding_tokens.txt', help='Path to steering prompts file')
     parser.add_argument('--prompt_to_steer', type=str, default='I am going to a ', help='Prompt to test steering')
+    parser.add_argument('--n_steered_examples', type=int, default='How many times to steer the same prompt')
 
     # conceptor params
     parser.add_argument('--aperture', type=float, default=10.0, help='Aperture for the conceptor')
@@ -133,7 +134,7 @@ if __name__ == '__main__':
     ave_hook = generate_ave_hook(steering_matrices=steering_matrices)
     sampling_kwargs = dict(temperature=args.temperature, top_p=args.top_p, freq_penalty=args.freq_penalty)
     editing_hooks = [(f"blocks.{args.extraction_layer}.hook_resid_pre", ave_hook)]
-    res = hooked_generate([args.prompt_to_steer] * 4, editing_hooks, seed=args.seed, **sampling_kwargs)
+    res = hooked_generate([args.prompt_to_steer] * args.n_steered_examples, editing_hooks, seed=args.seed, **sampling_kwargs)
 
     # Print results, removing the ugly beginning of sequence token
     res_str = model.to_string(res[:, 1:])
