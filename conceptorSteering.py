@@ -59,15 +59,20 @@ def generate_ave_hook(steering_matrices):
         if resid_pre.shape[1] == 1:
             return
 
+        # resid_pre.shape => torch.Size([4, 7, 1600])
+        # steering_matrices.shape => (4, 1600, 1600)
+
         # resid_pre contains the activations to be modified using the conceptor
         # This is an example where there is a steering conceptor matrix for each token
         prompt_to_steer_length, steering_matrices_length = resid_pre.shape[1], steering_matrices.shape[0]
         print(f"Prompt tokens: {prompt_to_steer_length}, Steering tokens: {steering_matrices_length}")
         assert steering_matrices_length <= prompt_to_steer_length, f"More steering tokens ({steering_matrices_length}) than prompt tokens ({prompt_to_steer_length})!"
 
-        # TODO : modify line below so that dot product is taken with correct conceptor matrix instead of addition
-        for i in range(resid_pre.shape[1]):
-            resid_pre[1][i] = np.dot(steering_matrices[i], resid_pre[1][i])
+        # Dot product is taken with correct conceptor matrix
+        for i in range(steering_matrices.shape[0]):
+            for j in range(resid_pre.shape[0]):
+                # TODO: batch this properly
+                resid_pre[j, i, :] = torch.dot(steering_matrices[i], resid_pre[j, i, :])
 
     return ave_hook
 
@@ -123,6 +128,7 @@ if __name__ == '__main__':
         compute_conceptor(activations[:, idx, :], aperture=args.aperture)
         for idx in range(activations.shape[1])
     ])
+    steering_matrices = torch.Tensor(steering_matrices)
     # shape: (num_tokens, num_activations, num_activations)
 
     ######################################
