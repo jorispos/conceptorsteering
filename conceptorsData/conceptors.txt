@@ -1,1 +1,0 @@
-Conceptors computed for each layer with aperture=50 -> shape (n_layers, n_features, n_features)
