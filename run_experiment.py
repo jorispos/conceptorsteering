@@ -5,8 +5,8 @@ from utils import compute_conceptor
 import os
 from absl import app, flags
 from datetime import datetime
-from conceptorSteeringBasecode import load_steering_prompts, get_resid_pre
-from conceptorSteeringBasecode import hooked_generate, generate_ave_hook
+from conceptor_steering import load_steering_prompts, get_resid_pre
+from conceptor_steering import hooked_generate, generate_ave_hook
 
 # Define the flags
 FLAGS = flags.FLAGS

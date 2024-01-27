@@ -1,21 +1,42 @@
-import argparse
 import numpy as np
 import torch
+from absl import app, flags
 from transformer_lens import HookedTransformer
 from typing import List
-from functools import partial
 from utils import compute_conceptor
 import os
 from datetime import datetime
 
+# Define the flags
+FLAGS = flags.FLAGS
+
+# Define the flags
+flags.DEFINE_string('model_name', 'gpt2-xl', 'Name of the model to load')
+flags.DEFINE_integer('seed', 0, 'Random seed')
+flags.DEFINE_string('steering_prompts_path', './prompts/wedding_tokens.txt', 'Path to steering prompts file')
+flags.DEFINE_string('prompt_to_steer', 'I am going to a ', 'Prompt to test steering')
+flags.DEFINE_integer('n_steered_examples', 4, 'How many times to steer the same prompt')
+
+# Experiment parameters
+flags.DEFINE_float('aperture', 10, 'Conceptor aperture to use')
+
+# Sampling kwargs (settings from paper) -- TODO @joris: which paper?
+flags.DEFINE_float('temperature', 1.0, 'Temperature for sampling')
+flags.DEFINE_float('top_p', 0.3, 'Top p for sampling')
+flags.DEFINE_float('freq_penalty', 1.0, 'Frequency penalty')
+flags.DEFINE_integer('extraction_layer', 6, 'Extraction layer number')
+
+
 def load_steering_prompts(model, path):
-    # Open the steering prompts file and read all prompts into a list
+    """
+    Loads the steering prompts from a file and adds padding to all prompts so
+    that all have the same token length.
+    """
     steering_prompts = []
     with open(path, "r") as file:
         for line in file:
             steering_prompts.append(line.strip())
 
-    # Add padding to all steering prompts so that all have the same token length
     tlen = lambda prompt: model.to_tokens(prompt).shape[1]
     pad_right = lambda prompt, length: prompt + " " * (length - tlen(prompt))
     l = max([tlen(p) for p in steering_prompts])
@@ -55,13 +76,26 @@ def hooked_generate(model, prompt_batch: List[str], fwd_hooks=[], seed=None, **k
 
 
 def generate_ave_hook(steering_matrices):
+    """
+    Generates a hook that applies the conceptor to the activations of the
+    prompt tokens.
+
+    Args:
+        steering_matrices (torch.Tensor): conceptor matrices for each token,
+            shape (n_tokens, n_emb, n_emb)
+    """
     def ave_hook(resid_pre, hook):
+        """
+        Applies the conceptor to the activations of the prompt tokens.
+
+        Args:
+            resid_pre (torch.Tensor): The pre-activation residuals from the
+                specified layer, shape (n_tokens, n_prompts, n_emb)
+            hook (Hook): The hook that called this function.
+        """
         # Makes sure only prompt tokens are modified
         if resid_pre.shape[1] == 1:
             return
-
-        # resid_pre.shape => torch.Size([4, 7, 1600])
-        # steering_matrices.shape => (4, 1600, 1600)
 
         # resid_pre contains the activations to be modified using the conceptor
         # This is an example where there is a steering conceptor matrix for each token
@@ -78,46 +112,23 @@ def generate_ave_hook(steering_matrices):
     return ave_hook
 
 
-def _parse_args():
-    parser = argparse.ArgumentParser(description='Script Configuration')
-
-    parser.add_argument('--model_name', type=str, default='gpt2-xl', help='Name of the model to load')
-    parser.add_argument('--seed', type=int, default=0, help='Random seed')
-    parser.add_argument('--steering_prompts_path', type=str, default='./prompts/wedding_tokens.txt', help='Path to steering prompts file')
-    parser.add_argument('--prompt_to_steer', type=str, default='I am going to a ', help='Prompt to test steering')
-    parser.add_argument('--n_steered_examples', type=int, default=4, help='How many times to steer the same prompt')
-
-    # conceptor params
-    parser.add_argument('--aperture', type=float, default=10.0, help='Aperture for the conceptor')
-
-    # sampling kwargs (settings from paper) -- TODO @joris: which paper?
-    parser.add_argument('--temperature', type=float, default=1.0, help='Temperature for sampling')
-    parser.add_argument('--top_p', type=float, default=0.3, help='Top p for sampling')
-    parser.add_argument('--freq_penalty', type=float, default=1.0, help='Frequency penalty')
-    parser.add_argument('--extraction_layer', type=int, default=6, help='Extraction layer number')
-
-    return parser.parse_args()
-
-
-if __name__ == '__main__':
-    args = _parse_args()
-
+def main(argv):
     # mps is not yet supported
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Load the model
     print(">> Loading model...")
     torch.set_grad_enabled(False)
-    model = HookedTransformer.from_pretrained(args.model_name, device=DEVICE)
+    model = HookedTransformer.from_pretrained(FLAGS.model_name, device=DEVICE)
     model.eval()
 
     # Activation Extraction
     print(">> Extracting activations from steering prompts...")
-    steering_prompts = load_steering_prompts(args.steering_prompts_path)
+    steering_prompts = load_steering_prompts(FLAGS.steering_prompts_path)
 
     activations = []  # (n_prompts, n_tokens, n_activations)
     for prompt in steering_prompts:
-        prompt_activations = get_resid_pre(prompt, args.extraction_layer)
+        prompt_activations = get_resid_pre(prompt, FLAGS.extraction_layer)
         prompt_activations = np.squeeze(prompt_activations.detach().cpu().numpy())
         print(str(prompt_activations.shape) + ": Activation vector for prompt: \"" + prompt + "\"")
         activations.append(prompt_activations)
@@ -128,7 +139,7 @@ if __name__ == '__main__':
     # Compute Conceptors - one conceptor per token (aggregated over all given prompts)
     print(">> Computing conceptor...")
     steering_matrices = np.array([
-        compute_conceptor(activations[:, idx, :], aperture=args.aperture)
+        compute_conceptor(activations[:, idx, :], aperture=FLAGS.aperture)
         for idx in range(activations.shape[1])
     ])
     steering_matrices = torch.Tensor(steering_matrices, device=DEVICE)
@@ -139,9 +150,9 @@ if __name__ == '__main__':
     ######################################
     print(">> Steering prompts using conceptors...")
     ave_hook = generate_ave_hook(steering_matrices=steering_matrices)
-    sampling_kwargs = dict(temperature=args.temperature, top_p=args.top_p, freq_penalty=args.freq_penalty)
-    editing_hooks = [(f"blocks.{args.extraction_layer}.hook_resid_pre", ave_hook)]
-    res = hooked_generate([args.prompt_to_steer] * args.n_steered_examples, editing_hooks, seed=args.seed, **sampling_kwargs)
+    sampling_kwargs = dict(temperature=FLAGS.temperature, top_p=FLAGS.top_p, freq_penalty=FLAGS.freq_penalty)
+    editing_hooks = [(f"blocks.{FLAGS.extraction_layer}.hook_resid_pre", ave_hook)]
+    res = hooked_generate([FLAGS.prompt_to_steer] * FLAGS.n_steered_examples, editing_hooks, seed=FLAGS.seed, **sampling_kwargs)
 
     ######################################
     ########### Save results #############
@@ -157,3 +168,7 @@ if __name__ == '__main__':
     # Store results in the text file
     with open(file_path, 'w') as file:
         file.write(("\n\n" + "-" * 80 + "\n\n").join(res_str))
+
+
+if __name__ == '__main__':
+    app.run(main)
