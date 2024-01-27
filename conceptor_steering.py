@@ -1,30 +1,6 @@
 import numpy as np
 import torch
-from absl import app, flags
-from transformer_lens import HookedTransformer
 from typing import List
-from utils import compute_conceptor
-import os
-from datetime import datetime
-
-# Define the flags
-FLAGS = flags.FLAGS
-
-# Define the flags
-flags.DEFINE_string('model_name', 'gpt2-xl', 'Name of the model to load')
-flags.DEFINE_integer('seed', 0, 'Random seed')
-flags.DEFINE_string('steering_prompts_path', './prompts/wedding_tokens.txt', 'Path to steering prompts file')
-flags.DEFINE_string('prompt_to_steer', 'I am going to a ', 'Prompt to test steering')
-flags.DEFINE_integer('n_steered_examples', 4, 'How many times to steer the same prompt')
-
-# Experiment parameters
-flags.DEFINE_float('aperture', 10, 'Conceptor aperture to use')
-
-# Sampling kwargs (settings from paper) -- TODO @joris: which paper?
-flags.DEFINE_float('temperature', 1.0, 'Temperature for sampling')
-flags.DEFINE_float('top_p', 0.3, 'Top p for sampling')
-flags.DEFINE_float('freq_penalty', 1.0, 'Frequency penalty')
-flags.DEFINE_integer('extraction_layer', 6, 'Extraction layer number')
 
 
 def load_steering_prompts(model, path):
@@ -65,6 +41,29 @@ def get_resid_pre(model, prompt: str, layer: int):
     return cache[name]
 
 
+def extract_activations(model, steering_prompts, extraction_layer, device):
+    """
+    Extract activations from the given model for the given steering prompts.
+
+    Parameters:
+    - model (HookedTransformer): The model to use for generating text.
+    - steering_prompts (list): List of steering prompts to extract activations for.
+    - extraction_layer (int): The layer to extract activations from.
+    - device (str): The device to use for computations.
+
+    Returns:
+    - torch.Tensor: The activations for the given steering prompts.
+    """
+    activations = []  # (n_prompts, n_tokens, n_activations)
+    for prompt in steering_prompts:
+        prompt_activations = get_resid_pre(model, prompt, extraction_layer)
+        prompt_activations = np.squeeze(prompt_activations.detach().cpu().numpy())
+        print(str(prompt_activations.shape) + ": Activation vector for prompt: \"" + prompt + "\"")
+        activations.append(prompt_activations)
+    activations = np.array(activations)
+    return torch.Tensor(activations, device=device)
+
+
 def hooked_generate(model, prompt_batch: List[str], fwd_hooks=[], seed=None, **kwargs):
     if seed is not None:
         torch.manual_seed(seed)
@@ -75,7 +74,23 @@ def hooked_generate(model, prompt_batch: List[str], fwd_hooks=[], seed=None, **k
     return r
 
 
-def generate_ave_hook(steering_matrices):
+def steer(C, x, beta):
+    """
+    Steers the given vector x using the conceptor C.
+
+    Args:
+        C (torch.Tensor): The conceptor matrix.
+        x (torch.Tensor): The vector to be steered.
+        beta (float): The steering parameter with 0: no steering, 1: full steering.
+
+    Returns:
+        torch.Tensor: The steered vector.
+    """
+    assert 0 <= beta <= 1, f"beta must be between 0 and 1, but was {beta}"
+    return beta * torch.matmul(C, x) + (1 - beta) * x
+
+
+def generate_ave_hook(steering_matrices, beta=1.0):
     """
     Generates a hook that applies the conceptor to the activations of the
     prompt tokens.
@@ -83,6 +98,7 @@ def generate_ave_hook(steering_matrices):
     Args:
         steering_matrices (torch.Tensor): conceptor matrices for each token,
             shape (n_tokens, n_emb, n_emb)
+        beta (float): The steering parameter with 0: no steering, 1: full steering.
     """
     def ave_hook(resid_pre, hook):
         """
@@ -107,68 +123,6 @@ def generate_ave_hook(steering_matrices):
         for i in range(steering_matrices.shape[0]):
             for j in range(resid_pre.shape[0]):
                 # TODO: batch this properly
-                resid_pre[j, i, :] = torch.matmul(steering_matrices[i], resid_pre[j, i, :])
+                resid_pre[j, i, :] = steer(steering_matrices[i], resid_pre[j, i, :], beta=beta)
 
     return ave_hook
-
-
-def main(argv):
-    # mps is not yet supported
-    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    # Load the model
-    print(">> Loading model...")
-    torch.set_grad_enabled(False)
-    model = HookedTransformer.from_pretrained(FLAGS.model_name, device=DEVICE)
-    model.eval()
-
-    # Activation Extraction
-    print(">> Extracting activations from steering prompts...")
-    steering_prompts = load_steering_prompts(FLAGS.steering_prompts_path)
-
-    activations = []  # (n_prompts, n_tokens, n_activations)
-    for prompt in steering_prompts:
-        prompt_activations = get_resid_pre(prompt, FLAGS.extraction_layer)
-        prompt_activations = np.squeeze(prompt_activations.detach().cpu().numpy())
-        print(str(prompt_activations.shape) + ": Activation vector for prompt: \"" + prompt + "\"")
-        activations.append(prompt_activations)
-    activations = np.array(activations)
-
-    print(str(activations.shape) + ": Activations matrix for all steering prompts")
-
-    # Compute Conceptors - one conceptor per token (aggregated over all given prompts)
-    print(">> Computing conceptor...")
-    steering_matrices = np.array([
-        compute_conceptor(activations[:, idx, :], aperture=FLAGS.aperture)
-        for idx in range(activations.shape[1])
-    ])
-    steering_matrices = torch.Tensor(steering_matrices, device=DEVICE)
-    # shape: (num_tokens, num_activations, num_activations)
-
-    ######################################
-    ### Steer prompts using Conceptors ###
-    ######################################
-    print(">> Steering prompts using conceptors...")
-    ave_hook = generate_ave_hook(steering_matrices=steering_matrices)
-    sampling_kwargs = dict(temperature=FLAGS.temperature, top_p=FLAGS.top_p, freq_penalty=FLAGS.freq_penalty)
-    editing_hooks = [(f"blocks.{FLAGS.extraction_layer}.hook_resid_pre", ave_hook)]
-    res = hooked_generate([FLAGS.prompt_to_steer] * FLAGS.n_steered_examples, editing_hooks, seed=FLAGS.seed, **sampling_kwargs)
-
-    ######################################
-    ########### Save results #############
-    ######################################
-
-    # Print results, removing the ugly beginning of sequence token
-    res_str = model.to_string(res[:, 1:])
-    
-    # Generate file path with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    file_path = os.path.join("resultsdata", f"results_{timestamp}.txt")
-
-    # Store results in the text file
-    with open(file_path, 'w') as file:
-        file.write(("\n\n" + "-" * 80 + "\n\n").join(res_str))
-
-
-if __name__ == '__main__':
-    app.run(main)
