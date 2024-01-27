@@ -8,7 +8,7 @@ from utils import compute_conceptor
 import os
 from datetime import datetime
 
-def load_steering_prompts(path):
+def load_steering_prompts(model, path):
     # Open the steering prompts file and read all prompts into a list
     steering_prompts = []
     with open(path, "r") as file:
@@ -24,7 +24,7 @@ def load_steering_prompts(path):
     return steering_prompts
 
 
-def get_resid_pre(prompt: str, layer: int):
+def get_resid_pre(model, prompt: str, layer: int):
     """
     Retrieves the pre-activation residuals from a specific layer in the model.
     These are the activations from the residual streams before they enter the
@@ -44,7 +44,7 @@ def get_resid_pre(prompt: str, layer: int):
     return cache[name]
 
 
-def hooked_generate(prompt_batch: List[str], fwd_hooks=[], seed=None, **kwargs):
+def hooked_generate(model, prompt_batch: List[str], fwd_hooks=[], seed=None, **kwargs):
     if seed is not None:
         torch.manual_seed(seed)
 

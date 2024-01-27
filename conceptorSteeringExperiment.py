@@ -1,15 +1,34 @@
-import argparse
 import numpy as np
 import torch
 from transformer_lens import HookedTransformer
-from typing import List
-from functools import partial
 from utils import compute_conceptor
 import os
+from absl import app, flags
 from datetime import datetime
+from conceptorSteeringBasecode import load_steering_prompts, get_resid_pre
+from conceptorSteeringBasecode import hooked_generate, generate_ave_hook
+
+# Define the flags
+FLAGS = flags.FLAGS
+
+# Define the flags
+flags.DEFINE_string('model_name', 'gpt2-xl', 'Name of the model to load')
+flags.DEFINE_integer('seed', 0, 'Random seed')
+flags.DEFINE_string('steering_prompts_path', './prompts/wedding_tokens.txt', 'Path to steering prompts file')
+flags.DEFINE_string('prompt_to_steer', 'I am going to a ', 'Prompt to test steering')
+flags.DEFINE_integer('n_steered_examples', 4, 'How many times to steer the same prompt')
+
+# Experiment parameters
+flags.DEFINE_list('apertures', [1e-2, 1e-1, 1, 10, 50, 100], 'List of aperture values to try')
+
+# Sampling kwargs (settings from paper) -- TODO @joris: which paper?
+flags.DEFINE_float('temperature', 1.0, 'Temperature for sampling')
+flags.DEFINE_float('top_p', 0.3, 'Top p for sampling')
+flags.DEFINE_float('freq_penalty', 1.0, 'Frequency penalty')
+flags.DEFINE_integer('extraction_layer', 6, 'Extraction layer number')
 
 
-def run_experiment(aperture, args, sampling_kwargs, folder_path):
+def run_experiment(model, activations, aperture, sampling_kwargs, folder_path, device):
     """
     Run an experiment with the given aperture value.
 
@@ -29,22 +48,22 @@ def run_experiment(aperture, args, sampling_kwargs, folder_path):
         compute_conceptor(activations[:, idx, :], aperture=aperture)
         for idx in range(activations.shape[1])
     ])
-    steering_matrices = torch.Tensor(steering_matrices, device=DEVICE)
+    steering_matrices = torch.Tensor(steering_matrices, device=device)
 
     # Generate ave_hook with the steering matrices
     ave_hook = generate_ave_hook(steering_matrices=steering_matrices)
 
     # Define editing_hooks using ave_hook
-    editing_hooks = [(f"blocks.{args.extraction_layer}.hook_resid_pre", ave_hook)]
+    editing_hooks = [(f"blocks.{FLAGS.extraction_layer}.hook_resid_pre", ave_hook)]
 
     # Generate text using the modified model
-    steered_res = hooked_generate([args.prompt_to_steer] * args.n_steered_examples, fwd_hooks=editing_hooks, seed=args.seed, **sampling_kwargs)
+    steered_res = hooked_generate(model, [FLAGS.prompt_to_steer] * FLAGS.n_steered_examples, fwd_hooks=editing_hooks, seed=FLAGS.seed, **sampling_kwargs)
 
     # Save results with aperture value in the filename
-    save_results(steered_res, aperture, args, folder_path)
+    save_results(model, steered_res, aperture, folder_path)
 
 
-def save_results(steered_res, aperture, args, folder_path):
+def save_results(model, steered_res, aperture, folder_path):
     """
     Save the steered results to a text file.
 
@@ -68,7 +87,7 @@ def save_results(steered_res, aperture, args, folder_path):
         file.write(("\n\n" + "-" * 80 + "\n\n").join(steered_str))
 
 
-def batch_run(apertures, args, folder_path):
+def batch_run(model, activations, apertures, folder_path, device):
     """
     Run batch experiments for each aperture.
 
@@ -78,8 +97,8 @@ def batch_run(apertures, args, folder_path):
     - folder_path (str): Path to the folder where results will be saved.
     """
     # Generate and save unsteered results once
-    sampling_kwargs = dict(temperature=args.temperature, top_p=args.top_p, freq_penalty=args.freq_penalty)
-    unsteered_res = hooked_generate([args.prompt_to_steer] * args.n_steered_examples, seed=args.seed, **sampling_kwargs)
+    sampling_kwargs = dict(temperature=FLAGS.temperature, top_p=FLAGS.top_p, freq_penalty=FLAGS.freq_penalty)
+    unsteered_res = hooked_generate(model, [FLAGS.prompt_to_steer] * FLAGS.n_steered_examples, seed=FLAGS.seed, **sampling_kwargs)
     unsteered_str = model.to_string(unsteered_res[:, 1:])
     unsteered_file_path = os.path.join(folder_path, "unsteered_results.txt")
     with open(unsteered_file_path, 'w') as file:
@@ -87,150 +106,26 @@ def batch_run(apertures, args, folder_path):
 
     # Run experiments for each aperture
     for aperture in apertures:
-        run_experiment(aperture, args, sampling_kwargs, folder_path)
+        run_experiment(model, activations, aperture, sampling_kwargs, folder_path, device)
 
 
-def load_steering_prompts(path):
-    """
-    Load steering prompts from a file and return a list of prompts.
-
-    Args:
-        path (str): The path to the file containing the steering prompts.
-
-    Returns:
-        list: A list of steering prompts.
-
-    """
-    # Open the steering prompts file and read all prompts into a list
-    steering_prompts = []
-    with open(path, "r") as file:
-        for line in file:
-            steering_prompts.append(line.strip())
-
-    # Add padding to all steering prompts so that all have the same token length
-    tlen = lambda prompt: model.to_tokens(prompt).shape[1]
-    pad_right = lambda prompt, length: prompt + " " * (length - tlen(prompt))
-    l = max([tlen(p) for p in steering_prompts])
-    steering_prompts = [pad_right(p, l) for p in steering_prompts]
-
-    return steering_prompts
-
-
-def get_resid_pre(prompt: str, layer: int):
-    """
-    Retrieves the pre-activation residuals from a specific layer in the model.
-    These are the activations from the residual streams before they enter the
-    Multi-Head Attention layer/block.
-
-    Args:
-        prompt (str): The input prompt for the model.
-        layer (int): The layer number from which to retrieve the residuals.
-
-    Returns:
-        torch.Tensor: The pre-activation residuals from the specified layer.
-    """
-    name = f"blocks.{layer}.hook_resid_pre"
-    cache, caching_hooks, _ = model.get_caching_hooks(lambda n: n == name)
-    with model.hooks(fwd_hooks=caching_hooks):
-        _ = model(prompt)
-    return cache[name]
-
-
-def hooked_generate(prompt_batch: List[str], fwd_hooks=[], seed=None, **kwargs):
-    """
-    Generates new tokens based on a given prompt batch using the model.
-
-    Args:
-        prompt_batch (List[str]): List of input prompts.
-        fwd_hooks (list, optional): List of forward hooks. Defaults to [].
-        seed (int, optional): Seed for random number generation. Defaults to None.
-        **kwargs: Additional keyword arguments for token generation.
-
-    Returns:
-        r: Generated tokens.
-
-    """
-    if seed is not None:
-        torch.manual_seed(seed)
-
-    with model.hooks(fwd_hooks=fwd_hooks):
-        tokenized = model.to_tokens(prompt_batch)
-        r = model.generate(input=tokenized, max_new_tokens=50, do_sample=True, **kwargs)
-    return r
-
-
-def generate_ave_hook(steering_matrices):
-    """
-    Generates an average hook function that modifies prompt tokens based on steering matrices.
-
-    Args:
-        steering_matrices (torch.Tensor): The steering matrices used for modifying prompt tokens.
-
-    Returns:
-        ave_hook (function): The average hook function that modifies prompt tokens.
-    """
-    def ave_hook(resid_pre, hook):
-        # Makes sure only prompt tokens are modified
-        if resid_pre.shape[1] == 1:
-            return
-
-        prompt_to_steer_length, steering_matrices_length = resid_pre.shape[1], steering_matrices.shape[0]
-        print(f"Prompt tokens: {prompt_to_steer_length}, Steering tokens: {steering_matrices_length}")
-        assert steering_matrices_length <= prompt_to_steer_length, f"More steering tokens ({steering_matrices_length}) than prompt tokens ({prompt_to_steer_length})!"
-
-        for i in range(steering_matrices.shape[0]):
-            for j in range(resid_pre.shape[0]):
-                resid_pre[j, i, :] = torch.matmul(steering_matrices[i], resid_pre[j, i, :])
-
-    return ave_hook
-
-
-def _parse_args():
-    """
-    Parse command line arguments.
-
-    Returns:
-        argparse.Namespace: Parsed command line arguments.
-    """
-    parser = argparse.ArgumentParser(description='Script Configuration')
-
-    parser.add_argument('--model_name', type=str, default='gpt2-xl', help='Name of the model to load')
-    parser.add_argument('--seed', type=int, default=0, help='Random seed')
-    parser.add_argument('--steering_prompts_path', type=str, default='./prompts/wedding_tokens.txt', help='Path to steering prompts file')
-    parser.add_argument('--prompt_to_steer', type=str, default='I am going to a ', help='Prompt to test steering')
-    parser.add_argument('--n_steered_examples', type=int, default=4, help='How many times to steer the same prompt')
-
-    # conceptor params
-    parser.add_argument('--aperture', type=float, default=10.0, help='Aperture for the conceptor')
-
-    # sampling kwargs (settings from paper) -- TODO @joris: which paper?
-    parser.add_argument('--temperature', type=float, default=1.0, help='Temperature for sampling')
-    parser.add_argument('--top_p', type=float, default=0.3, help='Top p for sampling')
-    parser.add_argument('--freq_penalty', type=float, default=1.0, help='Frequency penalty')
-    parser.add_argument('--extraction_layer', type=int, default=6, help='Extraction layer number')
-
-    return parser.parse_args()
-
-
-if __name__ == '__main__':
-    args = _parse_args()
-
+def main(argv):
     # mps is not yet supported
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Load the model
     print(">> Loading model...")
     torch.set_grad_enabled(False)
-    model = HookedTransformer.from_pretrained(args.model_name, device=DEVICE)
+    model = HookedTransformer.from_pretrained(FLAGS.model_name, device=DEVICE)
     model.eval()
 
     # Activation Extraction
     print(">> Extracting activations from steering prompts...")
-    steering_prompts = load_steering_prompts(args.steering_prompts_path)
+    steering_prompts = load_steering_prompts(model, FLAGS.steering_prompts_path)
 
     activations = []  # (n_prompts, n_tokens, n_activations)
     for prompt in steering_prompts:
-        prompt_activations = get_resid_pre(prompt, args.extraction_layer)
+        prompt_activations = get_resid_pre(model, prompt, FLAGS.extraction_layer)
         prompt_activations = np.squeeze(prompt_activations.detach().cpu().numpy())
         print(str(prompt_activations.shape) + ": Activation vector for prompt: \"" + prompt + "\"")
         activations.append(prompt_activations)
@@ -238,12 +133,16 @@ if __name__ == '__main__':
 
     print(str(activations.shape) + ": Activations matrix for all steering prompts")
 
-    # List of aperture values for experiments
-    aperture_values = [1e-2, 1e-1, 1, 10, 50, 100]  # Example values
-
     # Run batch experiments
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     folder_path = os.path.join("resultsdata", timestamp)
     os.makedirs(folder_path, exist_ok=True)
 
-    batch_run(aperture_values, args, folder_path)
+    # store current experiment flags
+    with open(os.path.join(folder_path, 'flags.txt'), 'w') as f:
+        f.write(FLAGS.flags_into_string())
+
+    batch_run(model, activations, FLAGS.apertures, folder_path, device=DEVICE)
+
+if __name__ == '__main__':
+    app.run(main)
