@@ -58,7 +58,7 @@ def extract_activations(model, steering_prompts, extraction_layer, device):
     for prompt in steering_prompts:
         prompt_activations = get_resid_pre(model, prompt, extraction_layer)
         prompt_activations = np.squeeze(prompt_activations.detach().cpu().numpy())
-        print(str(prompt_activations.shape) + ": Activation vector for prompt: \"" + prompt + "\"")
+        # print(str(prompt_activations.shape) + ": Activation vector for prompt: \"" + prompt + "\"")
         activations.append(prompt_activations)
     activations = np.array(activations)
     return torch.Tensor(activations, device=device)
@@ -87,7 +87,7 @@ def steer(C, x, beta):
         torch.Tensor: The steered vector.
     """
     assert 0 <= beta <= 1, f"beta must be between 0 and 1, but was {beta}"
-    return beta * torch.matmul(C, x) + (1 - beta) * x
+    return beta * torch.matmul(C, x) + x
 
 
 def generate_ave_hook(steering_matrices, beta=1.0):
