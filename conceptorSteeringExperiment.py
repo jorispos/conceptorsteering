@@ -180,7 +180,8 @@ def generate_ave_hook(steering_matrices):
 
         for i in range(steering_matrices.shape[0]):
             for j in range(resid_pre.shape[0]):
-                resid_pre[j, i, :] = torch.matmul(steering_matrices[i], resid_pre[j, i, :])
+                a = 0.75
+                resid_pre[j, i, :] = a * torch.matmul(steering_matrices[i], resid_pre[j, i, :]) + (1 - a) * resid_pre[j, i, :]
 
     return ave_hook
 
@@ -196,8 +197,8 @@ def _parse_args():
 
     parser.add_argument('--model_name', type=str, default='gpt2-xl', help='Name of the model to load')
     parser.add_argument('--seed', type=int, default=0, help='Random seed')
-    parser.add_argument('--steering_prompts_path', type=str, default='./prompts/wedding_tokens.txt', help='Path to steering prompts file')
-    parser.add_argument('--prompt_to_steer', type=str, default='I am going to a ', help='Prompt to test steering')
+    parser.add_argument('--steering_prompts_path', type=str, default='./prompts/fruits_tokens.txt', help='Path to steering prompts file')
+    parser.add_argument('--prompt_to_steer', type=str, default='When I am hungry all I want is to ', help='Prompt to test steering')
     parser.add_argument('--n_steered_examples', type=int, default=4, help='How many times to steer the same prompt')
 
     # conceptor params
