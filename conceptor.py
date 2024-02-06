@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 
-def compute_conceptor(X, aperture, svd=False, svd_eps=0.001):
+def compute_conceptor(X, aperture, svd=True, svd_eps=0.001):
     """
     Computes the conceptor matrix for a given input matrix X and an aperture value.
     (PyTorch version)
